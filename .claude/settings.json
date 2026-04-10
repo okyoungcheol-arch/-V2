@@ -1,0 +1,23 @@
+{
+  "model": "sonnet",
+  "env": {
+    "MAX_THINKING_TOKENS": "8192",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 60,
+            "statusMessage": "TypeScript 타입 검사 중...",
+            "command": "jq -r '.tool_input.file_path // \"\"' | { read -r f; if [[ \"$f\" =~ \\.(ts|tsx)$ ]] && [[ \"$f\" != *node_modules* ]]; then cd /c/Gen_AI/KN_Bus/bus-app && npx tsc --noEmit 2>&1 | head -30; fi; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+# 환경 변수 및 보안
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 종속성
+node_modules/
+.pnp
+.pnp.js
+
+# Claude & 빌드 결과물
+.claude/
+dist/
+build/
+.next/
