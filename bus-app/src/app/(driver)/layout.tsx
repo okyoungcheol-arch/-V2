@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, CalendarDays, Wallet } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { CalendarDays, Wallet, LogOut } from 'lucide-react'
 
 const tabs = [
   { href: '/schedule', label: '배차 일정', icon: CalendarDays },
@@ -11,12 +12,36 @@ const tabs = [
 
 export default function DriverLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const [empName, setEmpName] = useState<string>('')
+
+  useEffect(() => {
+    try {
+      const emp = sessionStorage.getItem('employee')
+      if (emp) setEmpName(JSON.parse(emp).name ?? '')
+    } catch { /* ignore */ }
+  }, [])
+
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    sessionStorage.removeItem('employee')
+    window.location.href = '/login'
+  }
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
       {/* 상단 헤더 */}
-      <header className="bg-[#1E40AF] text-white px-4 py-4 flex-shrink-0">
-        <h1 className="text-lg font-bold">경남전세버스</h1>
+      <header className="bg-[#1E40AF] text-white px-4 py-4 flex-shrink-0 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold leading-tight">경남전세버스</h1>
+          {empName && <p className="text-blue-200 text-xs mt-0.5">{empName} 기사님</p>}
+        </div>
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-1.5 text-blue-200 hover:text-white transition-colors text-sm min-h-[44px] px-2"
+        >
+          <LogOut size={18} />
+          <span className="text-xs">로그아웃</span>
+        </button>
       </header>
 
       {/* 메인 콘텐츠 */}
@@ -24,7 +49,7 @@ export default function DriverLayout({ children }: { children: React.ReactNode }
         {children}
       </main>
 
-      {/* 하단 탭바 — 최소 44px 터치 영역 */}
+      {/* 하단 탭바 */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex">
         {tabs.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')

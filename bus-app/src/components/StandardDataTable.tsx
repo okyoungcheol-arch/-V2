@@ -18,6 +18,7 @@ interface StandardDataTableProps<T> {
   searchPlaceholder?: string
   emptyMessage?: string
   actions?: (row: T) => React.ReactNode
+  fillHeight?: boolean  // true 시 부모 높이를 채우며 테이블 내부 스크롤
 }
 
 export default function StandardDataTable<T extends { id: string }>({
@@ -27,6 +28,7 @@ export default function StandardDataTable<T extends { id: string }>({
   searchPlaceholder = '검색...',
   emptyMessage = '데이터가 없습니다.',
   actions,
+  fillHeight = false,
 }: StandardDataTableProps<T>) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<string | null>(null)
@@ -66,10 +68,10 @@ export default function StandardDataTable<T extends { id: string }>({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className={`flex flex-col gap-4 ${fillHeight ? 'h-full min-h-0' : ''}`}>
       {/* 검색 */}
       {searchKeys.length > 0 && (
-        <div className="relative w-72">
+        <div className="relative w-72 flex-shrink-0">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
@@ -82,7 +84,7 @@ export default function StandardDataTable<T extends { id: string }>({
       )}
 
       {/* 테이블 */}
-      <div className="overflow-auto rounded-xl border border-gray-200 bg-white">
+      <div className={`overflow-auto rounded-xl border border-gray-200 bg-white ${fillHeight ? 'flex-1 min-h-0' : ''}`}>
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
             <tr>
@@ -148,7 +150,7 @@ export default function StandardDataTable<T extends { id: string }>({
       </div>
 
       {/* 결과 수 */}
-      <p className="text-xs text-gray-400 text-right">
+      <p className="text-xs text-gray-400 text-right flex-shrink-0">
         총 {filtered.length}건
       </p>
     </div>

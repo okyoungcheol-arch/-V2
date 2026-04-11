@@ -1,9 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import {
   LayoutDashboard,
   CalendarDays,
@@ -33,13 +32,12 @@ const navItems = [
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const router = useRouter()
-  const supabase = createClient()
   const [collapsed, setCollapsed] = useState(false)
 
   async function handleLogout() {
-    await supabase.auth.signOut()
-    router.push('/login')
+    await fetch('/api/auth/logout', { method: 'POST' })
+    sessionStorage.removeItem('employee')
+    window.location.href = '/login'
   }
 
   return (

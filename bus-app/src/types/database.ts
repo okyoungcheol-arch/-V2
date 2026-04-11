@@ -60,37 +60,47 @@ export interface Employee {
   name: string
   emp_number: string | null
   role: UserRole
-  license_number: string | null
-  login_id: string | null
-  pin_code: string | null
-  monthly_salary: number
   phone: string | null
+  license_number: string | null
   can_drive: boolean
   status: EmployeeStatus
-  auth_user_id: string | null
+  employment_type: string | null   // 고용형태
+  address: string | null           // 주소
   join_date: string | null
+  resignation_date: string | null  // 퇴사일
+  monthly_salary: number
   bank_name: string | null
   bank_account: string | null
+  shinhan_account: string | null   // 신한은행 계좌번호
+  hometax_id: string | null        // 홈텍스 ID
+  login_id: string | null
+  pin_code: string | null
   notes: string | null
   created_at: string
+  auth_user_id: string | null
 }
 
 export interface EmployeeInsert {
   name: string
   emp_number?: string | null
   role?: UserRole
-  license_number?: string | null
-  login_id?: string | null
-  pin_code?: string | null
-  monthly_salary?: number
   phone?: string | null
+  license_number?: string | null
   can_drive?: boolean
   status?: EmployeeStatus
-  auth_user_id?: string | null
+  employment_type?: string | null
+  address?: string | null
   join_date?: string | null
+  resignation_date?: string | null
+  monthly_salary?: number
   bank_name?: string | null
   bank_account?: string | null
+  shinhan_account?: string | null
+  hometax_id?: string | null
+  login_id?: string | null
+  pin_code?: string | null
   notes?: string | null
+  auth_user_id?: string | null
 }
 
 export type EmployeeUpdate = Partial<EmployeeInsert>

@@ -1,48 +1,46 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+// 관리자/직원 전용 경로
+const ADMIN_ROUTES = [
+  '/dashboard', '/dispatches', '/installments',
+  '/bank', '/ledger', '/routes', '/vehicles',
+  '/employees', '/clients', '/operations',
+]
+// 기사 전용 경로
+const DRIVER_ROUTES = ['/schedule', '/earnings']
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
-
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // 로그인 페이지는 누구나 접근 가능
-  if (pathname === '/login') {
-    if (user) {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-    return supabaseResponse
+  // 정적 파일·API·로그인 페이지는 통과
+  if (pathname.startsWith('/api/') || pathname === '/login') {
+    return NextResponse.next()
   }
 
-  // 미인증 → 로그인 페이지로
-  if (!user) {
+  const role = request.cookies.get('emp_role')?.value
+
+  // 미로그인 → 로그인 페이지로
+  if (!role) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  return supabaseResponse
+  // 루트 → 역할별 홈으로
+  if (pathname === '/') {
+    const dest = role === 'user' ? '/schedule' : '/dashboard'
+    return NextResponse.redirect(new URL(dest, request.url))
+  }
+
+  // 기사(user)가 관리자 페이지 접근 시 → /schedule 로
+  if (role === 'user' && ADMIN_ROUTES.some((r) => pathname.startsWith(r))) {
+    return NextResponse.redirect(new URL('/schedule', request.url))
+  }
+
+  // 관리자/직원이 기사 페이지 접근 시 → /dashboard 로
+  if ((role === 'admin' || role === 'staff') && DRIVER_ROUTES.some((r) => pathname.startsWith(r))) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
+
+  return NextResponse.next()
 }
 
 export const config = {

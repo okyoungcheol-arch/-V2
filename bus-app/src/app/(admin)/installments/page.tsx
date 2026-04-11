@@ -9,7 +9,7 @@ import {
 } from '@/types/database'
 import Decimal from 'decimal.js'
 import { format, addMonths, parseISO } from 'date-fns'
-import { Plus, X, ChevronDown, ChevronUp, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Plus, X, ChevronDown, ChevronUp, CheckCircle2, AlertCircle, Pencil, Trash2 } from 'lucide-react'
 
 // ── 할부 스케줄 자동 계산 ──
 function generateSchedule(
@@ -87,9 +87,17 @@ export default function InstallmentsPage() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<InstallmentInsert>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // 체크박스 선택
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  // 삭제 확인
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // 스케줄 보기
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -155,46 +163,130 @@ export default function InstallmentsPage() {
     }))
   }
 
+  function openCreate() {
+    setEditingId(null)
+    setForm(EMPTY_FORM)
+    setError('')
+    setModalOpen(true)
+  }
+
+  function openEdit(inst: Installment) {
+    setEditingId(inst.id)
+    setForm({
+      vehicle_id: inst.vehicle_id,
+      loan_amount: inst.loan_amount,
+      loan_period: inst.loan_period,
+      grace_period: inst.grace_period,
+      interest_rate: inst.interest_rate,
+      repayment_type: inst.repayment_type,
+      creditor_name: inst.creditor_name,
+      start_date: inst.start_date,
+    })
+    setError('')
+    setModalOpen(true)
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault(); setError(''); setSaving(true)
     try {
       if (!form.vehicle_id) throw new Error('차량을 선택해 주세요.')
 
-      // 1. 할부정보 저장
-      const { data: inst, error: instErr } = await supabase
-        .from('installments')
-        .insert({
-          vehicle_id: form.vehicle_id,
-          loan_amount: Number(form.loan_amount),
-          loan_period: Number(form.loan_period),
-          grace_period: Number(form.grace_period),
-          interest_rate: Number(form.interest_rate),
-          repayment_type: form.repayment_type,
-          creditor_name: form.creditor_name || null,
-          start_date: form.start_date,
-        })
-        .select()
-        .single()
-      if (instErr || !inst) throw instErr ?? new Error('저장 실패')
+      if (editingId) {
+        // 수정: 할부정보 업데이트 + 스케줄 재생성
+        const { error: updErr } = await supabase
+          .from('installments')
+          .update({
+            vehicle_id: form.vehicle_id,
+            loan_amount: Number(form.loan_amount),
+            loan_period: Number(form.loan_period),
+            grace_period: Number(form.grace_period),
+            interest_rate: Number(form.interest_rate),
+            repayment_type: form.repayment_type,
+            creditor_name: form.creditor_name || null,
+            start_date: form.start_date,
+          })
+          .eq('id', editingId)
+        if (updErr) throw updErr
 
-      // 2. 스케줄 자동 생성
-      const scheduleRows = generateSchedule(
-        Number(form.loan_amount),
-        Number(form.loan_period),
-        Number(form.grace_period),
-        Number(form.interest_rate),
-        form.repayment_type ?? '원리금균등',
-        form.start_date,
-        inst.id,
-      )
-      const { error: schErr } = await supabase.from('installment_schedule').insert(scheduleRows)
-      if (schErr) throw schErr
+        // 기존 스케줄 삭제 후 재생성
+        await supabase.from('installment_schedule').delete().eq('installment_id', editingId)
+        const scheduleRows = generateSchedule(
+          Number(form.loan_amount), Number(form.loan_period), Number(form.grace_period),
+          Number(form.interest_rate), form.repayment_type ?? '원리금균등', form.start_date, editingId,
+        )
+        const { error: schErr } = await supabase.from('installment_schedule').insert(scheduleRows)
+        if (schErr) throw schErr
 
-      setModalOpen(false); load()
+        // 캐시 초기화
+        setSchedules((prev) => { const n = { ...prev }; delete n[editingId]; return n })
+      } else {
+        // 신규 등록
+        const { data: inst, error: instErr } = await supabase
+          .from('installments')
+          .insert({
+            vehicle_id: form.vehicle_id,
+            loan_amount: Number(form.loan_amount),
+            loan_period: Number(form.loan_period),
+            grace_period: Number(form.grace_period),
+            interest_rate: Number(form.interest_rate),
+            repayment_type: form.repayment_type,
+            creditor_name: form.creditor_name || null,
+            start_date: form.start_date,
+          })
+          .select().single()
+        if (instErr || !inst) throw instErr ?? new Error('저장 실패')
+
+        const scheduleRows = generateSchedule(
+          Number(form.loan_amount), Number(form.loan_period), Number(form.grace_period),
+          Number(form.interest_rate), form.repayment_type ?? '원리금균등', form.start_date, inst.id,
+        )
+        const { error: schErr } = await supabase.from('installment_schedule').insert(scheduleRows)
+        if (schErr) throw schErr
+      }
+
+      setModalOpen(false); setSelectedIds(new Set()); load()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '저장 실패')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true)
+    try {
+      const ids = Array.from(selectedIds)
+      // 스케줄은 CASCADE로 자동 삭제
+      const { error } = await supabase.from('installments').delete().in('id', ids)
+      if (error) throw error
+      setSelectedIds(new Set())
+      setDeleteConfirm(false)
+      setSchedules((prev) => {
+        const n = { ...prev }
+        ids.forEach((id) => delete n[id])
+        return n
+      })
+      load()
+    } catch {
+      // silent
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const n = new Set(prev)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === installments.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(installments.map((i) => i.id)))
     }
   }
 
@@ -208,12 +300,35 @@ export default function InstallmentsPage() {
             <h2 className="text-2xl font-bold text-gray-900">할부 관리</h2>
             <p className="text-sm text-gray-500 mt-1">차량 할부계약 등록 · 전체 회차 스케줄 자동 생성</p>
           </div>
-          <button
-            onClick={() => { setForm(EMPTY_FORM); setError(''); setModalOpen(true) }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-[#1E40AF] text-white text-sm font-medium rounded-xl hover:bg-blue-800 min-h-[44px]"
-          >
-            <Plus size={16} /> 할부 등록
-          </button>
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <>
+                {selectedIds.size === 1 && (
+                  <button
+                    onClick={() => {
+                      const inst = installments.find((i) => i.id === Array.from(selectedIds)[0])
+                      if (inst) openEdit(inst)
+                    }}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-50 min-h-[44px]"
+                  >
+                    <Pencil size={15} /> 수정
+                  </button>
+                )}
+                <button
+                  onClick={() => setDeleteConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-200 text-red-600 text-sm font-medium rounded-xl hover:bg-red-100 min-h-[44px]"
+                >
+                  <Trash2 size={15} /> 삭제 ({selectedIds.size})
+                </button>
+              </>
+            )}
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2.5 bg-[#1E40AF] text-white text-sm font-medium rounded-xl hover:bg-blue-800 min-h-[44px]"
+            >
+              <Plus size={16} /> 할부 등록
+            </button>
+          </div>
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-8 py-6">
@@ -244,18 +359,38 @@ export default function InstallmentsPage() {
               등록된 할부 계약이 없습니다.
             </div>
           )}
+          {installments.length > 0 && (
+            <div className="flex items-center gap-2 px-1 pb-1">
+              <input
+                type="checkbox"
+                checked={selectedIds.size === installments.length}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 accent-[#1E40AF] cursor-pointer"
+              />
+              <span className="text-xs text-gray-500">전체선택</span>
+            </div>
+          )}
           {installments.map((inst) => {
             const sched = schedules[inst.id] ?? []
             const paidCount = sched.filter((s) => s.is_paid).length
             const isExpanded = expandedId === inst.id
+            const isSelected = selectedIds.has(inst.id)
 
             return (
-              <div key={inst.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <div key={inst.id} className={`bg-white rounded-2xl border overflow-hidden transition-colors ${isSelected ? 'border-[#1E40AF] ring-1 ring-[#1E40AF]/30' : 'border-gray-200'}`}>
                 {/* 계약 헤더 */}
-                <div
-                  className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50"
-                  onClick={() => loadSchedule(inst.id)}
-                >
+                <div className="flex items-center px-6 py-4 gap-4">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(inst.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 accent-[#1E40AF] cursor-pointer flex-shrink-0"
+                  />
+                  <div
+                    className="flex items-center justify-between flex-1 cursor-pointer hover:bg-gray-50 rounded-xl -mx-2 px-2 py-1"
+                    onClick={() => loadSchedule(inst.id)}
+                  >
                   <div className="flex items-center gap-6">
                     <div>
                       <p className="font-bold text-gray-900">{inst.vehicles?.plate_number ?? '-'}</p>
@@ -281,16 +416,17 @@ export default function InstallmentsPage() {
                     <span className="text-xs">{isExpanded ? '접기' : '스케줄 보기'}</span>
                     {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
+                  </div>
                 </div>
 
                 {/* 스케줄 테이블 */}
                 {isExpanded && (
-                  <div className="border-t border-gray-100 overflow-x-auto">
+                  <div className="border-t border-gray-100 overflow-x-auto overflow-y-auto max-h-[480px]">
                     {loadingSchedule ? (
                       <div className="py-8 text-center text-gray-400 text-sm">불러오는 중...</div>
                     ) : (
                       <table className="min-w-full text-sm">
-                        <thead className="bg-gray-50">
+                        <thead className="bg-gray-50 sticky top-0 z-10">
                           <tr>
                             {['회차', '납부일', '원금', '이자', '원리금', '잔액', '납부'].map((h) => (
                               <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">{h}</th>
@@ -337,14 +473,40 @@ export default function InstallmentsPage() {
 
       </div>
 
-      {/* 등록 모달 */}
+      {/* 삭제 확인 모달 */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <Trash2 size={18} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">할부 계약 삭제</h3>
+                <p className="text-sm text-gray-500">총 {selectedIds.size}건을 삭제합니다</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 bg-red-50 rounded-xl px-4 py-3 mb-5">
+              삭제 시 연결된 전체 납부 스케줄도 함께 삭제됩니다. 되돌릴 수 없습니다.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setDeleteConfirm(false)} className="px-5 py-2.5 text-sm border border-gray-300 rounded-xl hover:bg-gray-50 min-h-[44px]">취소</button>
+              <button onClick={handleDelete} disabled={deleting} className="px-5 py-2.5 text-sm bg-red-600 text-white rounded-xl hover:bg-red-700 disabled:opacity-50 min-h-[44px]">
+                {deleting ? '삭제 중...' : '삭제'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 등록/수정 모달 */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <div>
-                <h3 className="text-lg font-bold">할부 계약 등록</h3>
-                <p className="text-xs text-gray-500 mt-0.5">저장 시 전체 회차 스케줄이 자동 생성됩니다</p>
+                <h3 className="text-lg font-bold">{editingId ? '할부 계약 수정' : '할부 계약 등록'}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{editingId ? '수정 시 기존 스케줄이 재생성됩니다' : '저장 시 전체 회차 스케줄이 자동 생성됩니다'}</p>
               </div>
               <button onClick={() => setModalOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
             </div>
@@ -358,8 +520,8 @@ export default function InstallmentsPage() {
                     </select>
                   </Field>
                 </div>
-                <Field label="거래처(은행명)">
-                  <input className={ic} value={form.creditor_name ?? ''} onChange={(e) => setForm({ ...form, creditor_name: e.target.value })} placeholder="예: 농협은행" />
+                <Field label="거래처">
+                  <input className={ic} value={form.creditor_name ?? ''} onChange={(e) => setForm({ ...form, creditor_name: e.target.value })} placeholder="예: 캐피탈, 리스사 등" />
                 </Field>
                 <Field label="대출시작일 *">
                   <input type="date" className={ic} value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} required />
@@ -408,7 +570,7 @@ export default function InstallmentsPage() {
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={() => setModalOpen(false)} className="px-5 py-2.5 text-sm border border-gray-300 rounded-xl hover:bg-gray-50 min-h-[44px]">취소</button>
                 <button type="submit" disabled={saving} className="px-5 py-2.5 text-sm bg-[#1E40AF] text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 min-h-[44px]">
-                  {saving ? '저장 및 스케줄 생성 중...' : '등록 및 스케줄 생성'}
+                  {saving ? '저장 중...' : editingId ? '수정 및 스케줄 재생성' : '등록 및 스케줄 생성'}
                 </button>
               </div>
             </form>
