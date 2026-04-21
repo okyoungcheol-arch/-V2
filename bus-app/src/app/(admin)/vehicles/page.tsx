@@ -155,22 +155,22 @@ export default function VehiclesPage() {
 
   const columns: Column<Vehicle>[] = [
     { key: 'plate_number', label: '차량번호', sortable: true },
-    { key: 'affiliation', label: '소속', render: (v) => String(v ?? '-') },
-    { key: 'investor', label: '출자자', render: (v) => String(v ?? '-') },
-    { key: 'model_name', label: '모델명', render: (v) => String(v ?? '-') },
-    { key: 'manufacture_year', label: '연식', render: (v) => v ? `${v}년` : '-' },
-    { key: 'capacity', label: '정원', render: (v) => v ? `${v}인` : '-' },
+    { key: 'affiliation', label: '소속', sortable: true, render: (v) => String(v ?? '-') },
+    { key: 'investor', label: '출자자', sortable: true, render: (v) => String(v ?? '-') },
+    { key: 'model_name', label: '모델명', sortable: true, render: (v) => String(v ?? '-') },
+    { key: 'manufacture_year', label: '연식', sortable: true, render: (v) => v ? `${v}년` : '-' },
+    { key: 'capacity', label: '정원', sortable: true, render: (v) => v ? `${v}인` : '-' },
     {
-      key: 'insurance_expiry', label: '보험만료일',
+      key: 'insurance_expiry', label: '보험만료일', sortable: true,
       render: (v) => <DdayBadge dateStr={v as string | null} />,
     },
     {
-      key: 'inspection_end_date', label: '검사종료일',
+      key: 'inspection_end_date', label: '검사종료일', sortable: true,
       render: (v) => <DdayBadge dateStr={v as string | null} />,
     },
-    { key: 'fuel_card_no', label: '유류카드', render: (v) => String(v ?? '-') },
+    { key: 'fuel_card_no', label: '유류카드', sortable: true, render: (v) => String(v ?? '-') },
     {
-      key: 'has_installment', label: '할부',
+      key: 'has_installment', label: '할부', sortable: true,
       render: (v) => (
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${v === 'Y' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
           {v === 'Y' ? '있음' : '없음'}
@@ -178,7 +178,7 @@ export default function VehiclesPage() {
       ),
     },
     {
-      key: 'status', label: '상태',
+      key: 'status', label: '상태', sortable: true,
       render: (v) => (
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
           v === '운행' ? 'bg-green-100 text-green-700' :
@@ -202,10 +202,10 @@ export default function VehiclesPage() {
           </button>
         </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-8 py-6">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-8 py-6">
 
       {loadError && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex-shrink-0">
           {loadError}
         </div>
       )}
@@ -219,6 +219,7 @@ export default function VehiclesPage() {
           searchKeys={['plate_number', 'model_name', 'affiliation', 'investor']}
           searchPlaceholder="차량번호, 모델명, 소속, 출자자 검색"
           emptyMessage="등록된 차량이 없습니다."
+          fillHeight={true}
           actions={(row) => (
             <div className="flex items-center gap-2 justify-end">
               <button onClick={() => openEdit(row)} className="p-1.5 text-gray-400 hover:text-blue-600" title="수정"><Pencil size={15} /></button>

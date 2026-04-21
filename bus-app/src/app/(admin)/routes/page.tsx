@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Route, RouteInsert, RouteUpdate, Client, RouteType, DayType, RouteStatus } from '@/types/database'
+import { Route, RouteInsert, RouteUpdate, Client, RouteType, DayType } from '@/types/database'
 import StandardDataTable, { Column } from '@/components/StandardDataTable'
 import { Plus, Pencil, Trash2, X } from 'lucide-react'
 
@@ -20,8 +20,13 @@ const EMPTY_FORM: RouteInsert = {
   route_type: '정기',
   day_type: '평일',
   default_departure_time: '',
+  distance_km: null,
+  operation_days: 1,
+  plate_number: '',
+  driver_name: '',
+  effective_start_date: null,
+  effective_end_date: null,
   client_id: null,
-  status: '운행중',
   notes: '',
 }
 
@@ -72,8 +77,13 @@ export default function RoutesPage() {
       route_type: row.route_type,
       day_type: row.day_type,
       default_departure_time: row.default_departure_time ?? '',
+      distance_km: row.distance_km ?? null,
+      operation_days: row.operation_days ?? 1,
+      plate_number: row.plate_number ?? '',
+      driver_name: row.driver_name ?? '',
+      effective_start_date: row.effective_start_date ?? null,
+      effective_end_date: row.effective_end_date ?? null,
       client_id: row.client_id ?? null,
-      status: row.status,
       notes: row.notes ?? '',
     })
     setError('')
@@ -97,6 +107,12 @@ export default function RoutesPage() {
         fare_amount: Number(form.fare_amount),
         driver_allowance: Number(form.driver_allowance),
         default_departure_time: form.default_departure_time || null,
+        distance_km: form.distance_km ? Number(form.distance_km) : null,
+        operation_days: form.operation_days ? Number(form.operation_days) : 1,
+        plate_number: form.plate_number || null,
+        driver_name: form.driver_name || null,
+        effective_start_date: form.effective_start_date || null,
+        effective_end_date: form.effective_end_date || null,
         client_id: form.client_id || null,
         notes: form.notes || null,
       }
@@ -119,36 +135,39 @@ export default function RoutesPage() {
   const columns: Column<Route>[] = [
     { key: 'route_code', label: '노선코드', sortable: true },
     { key: 'route_name', label: '노선명', sortable: true },
-    { key: 'origin', label: '출발지' },
-    { key: 'destination', label: '도착지' },
     {
-      key: 'route_type', label: '유형',
+      key: 'route_type', label: '유형', sortable: true,
       render: (v) => (
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${v === '정기' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
           {String(v)}
         </span>
       ),
     },
-    { key: 'day_type', label: '운행조' },
+    { key: 'day_type', label: '운행조', sortable: true },
+    { key: 'default_departure_time', label: '출발시간', sortable: true, render: (v) => v ? String(v).slice(0, 5) : '-' },
+    { key: 'origin', label: '출발지', sortable: true },
+    { key: 'destination', label: '도착지', sortable: true },
+    { key: 'plate_number', label: '차량번호', sortable: true },
+    { key: 'driver_name', label: '기사이름', sortable: true },
     {
-      key: 'fare_amount', label: '운행금액',
+      key: 'fare_amount', label: '운행금액', sortable: true,
       render: (v) => Number(v).toLocaleString() + '원',
     },
     {
-      key: 'driver_allowance', label: '기사수당',
-      render: (v) => Number(v).toLocaleString() + '원',
+      key: 'operation_days', label: '운행일수', sortable: true,
+      render: (v) => v != null ? String(v) + '일' : '-',
     },
     {
-      key: 'client_id', label: '계약처',
+      key: 'effective_start_date', label: '적용시작일', sortable: true,
+      render: (v) => v ? String(v) : '-',
+    },
+    {
+      key: 'effective_end_date', label: '적용종료일', sortable: true,
+      render: (v) => v ? String(v) : '-',
+    },
+    {
+      key: 'client_id', label: '계약처', sortable: true,
       render: (_, row) => row.clients?.name ?? '-',
-    },
-    {
-      key: 'status', label: '상태',
-      render: (v) => (
-        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${v === '운행중' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-          {v === '운행중' ? '운행중' : '비활성'}
-        </span>
-      ),
     },
   ]
 
@@ -168,7 +187,7 @@ export default function RoutesPage() {
           </button>
         </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-8 py-6">
+      <div className="flex-1 min-h-0 overflow-hidden px-8 py-6">
 
       {loading ? (
         <div className="text-center py-20 text-gray-400">불러오는 중...</div>
@@ -179,6 +198,7 @@ export default function RoutesPage() {
           searchKeys={['route_code', 'route_name', 'origin', 'destination']}
           searchPlaceholder="노선코드, 노선명, 출발지 검색"
           emptyMessage="등록된 노선이 없습니다."
+          fillHeight={true}
           actions={(row) => (
             <div className="flex items-center gap-2 justify-end">
               <button onClick={() => openEdit(row)} className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors" title="수정">
@@ -225,11 +245,26 @@ export default function RoutesPage() {
                 <Field label="기본 출발시간">
                   <input type="time" className={inputCls} value={form.default_departure_time ?? ''} onChange={(e) => setForm({ ...form, default_departure_time: e.target.value })} />
                 </Field>
+                <Field label="거리 (km)">
+                  <input type="number" className={inputCls} value={form.distance_km ?? ''} onChange={(e) => setForm({ ...form, distance_km: e.target.value ? Number(e.target.value) : null })} min={0} step={0.1} placeholder="예: 35.5" />
+                </Field>
+                <Field label="운행일수">
+                  <input type="number" className={inputCls} value={form.operation_days ?? 1} onChange={(e) => setForm({ ...form, operation_days: Number(e.target.value) })} min={1} />
+                </Field>
+                <Field label="차량번호">
+                  <input className={inputCls} value={form.plate_number ?? ''} onChange={(e) => setForm({ ...form, plate_number: e.target.value })} placeholder="예: 00가 0000" />
+                </Field>
+                <Field label="기사이름">
+                  <input className={inputCls} value={form.driver_name ?? ''} onChange={(e) => setForm({ ...form, driver_name: e.target.value })} placeholder="이름" />
+                </Field>
+                <Field label="적용시작일">
+                  <input type="date" className={inputCls} value={form.effective_start_date ?? ''} onChange={(e) => setForm({ ...form, effective_start_date: e.target.value || null })} />
+                </Field>
+                <Field label="적용종료일">
+                  <input type="date" className={inputCls} value={form.effective_end_date ?? ''} onChange={(e) => setForm({ ...form, effective_end_date: e.target.value || null })} />
+                </Field>
                 <Field label="운행금액 (원)">
                   <input type="number" className={inputCls} value={form.fare_amount} onChange={(e) => setForm({ ...form, fare_amount: Number(e.target.value) })} min={0} />
-                </Field>
-                <Field label="기사수당 (원)">
-                  <input type="number" className={inputCls} value={form.driver_allowance} onChange={(e) => setForm({ ...form, driver_allowance: Number(e.target.value) })} min={0} />
                 </Field>
                 <Field label="노선유형">
                   <select className={inputCls} value={form.route_type} onChange={(e) => setForm({ ...form, route_type: e.target.value as RouteType })}>
@@ -245,12 +280,6 @@ export default function RoutesPage() {
                   <select className={inputCls} value={form.client_id ?? ''} onChange={(e) => setForm({ ...form, client_id: e.target.value || null })}>
                     <option value="">선택 안함</option>
                     {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </Field>
-                <Field label="상태">
-                  <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as RouteStatus })}>
-                    <option value="운행중">운행중</option>
-                    <option value="비활성">비활성</option>
                   </select>
                 </Field>
               </div>

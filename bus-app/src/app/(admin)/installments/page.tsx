@@ -8,48 +8,126 @@ import {
   Vehicle, RepaymentType,
 } from '@/types/database'
 import Decimal from 'decimal.js'
-import { format, addMonths, parseISO } from 'date-fns'
+import { format, addMonths, parseISO, getDaysInMonth, differenceInDays } from 'date-fns'
 import { Plus, X, ChevronDown, ChevronUp, CheckCircle2, AlertCircle, Pencil, Trash2 } from 'lucide-react'
 
+// ── 납부일 계산: 초회는 first_payment_date 그대로, 이후는 payment_day 기준 월 증가 ──
+function calcDueDate(firstPaymentDate: string, monthOffset: number, paymentDay: number): string {
+  if (monthOffset === 0) return firstPaymentDate
+  const base = addMonths(parseISO(firstPaymentDate), monthOffset)
+  const day = Math.min(paymentDay, getDaysInMonth(base))
+  return format(new Date(base.getFullYear(), base.getMonth(), day), 'yyyy-MM-dd')
+}
+
+// ── 1회차 이자 계산 (일할 기준) ──
+// • days ≤ 0  : 표준 1개월 이자
+// • days > 0  : 실제 일수 기준 일할이자 = 대출금 × 연이율/365 × days
+function calcFirstInterest(
+  loan: Decimal,
+  monthly: Decimal, daily: Decimal, days: number,
+): Decimal {
+  if (days <= 0) {
+    return loan.mul(monthly).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+  }
+  // 실제 일수 기준 일할이자 (30일 초과 포함 동일 공식)
+  return loan.mul(daily).mul(days).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+}
+
 // ── 할부 스케줄 자동 계산 ──
+// • 총 회차 = loanPeriod (항상)
+// • 원리금균등: PMT를 대출금 전체 기간(loanPeriod)으로 1회 계산 후 고정
+//   - 1회차: PMT의 원금(= PMT - 표준월이자) + 일할이자(30일 분기)
+//   - 2회차~: 고정 PMT 적용 (interest = 잔액×월이율, principal = PMT - interest)
+// • 원금균등: 매월 균등 원금, 이자는 잔액×월이율 / 단 1회차 이자는 일할
 function generateSchedule(
   loanAmount: number,
   loanPeriod: number,
   gracePeriod: number,
   annualRate: number,
   repaymentType: RepaymentType,
-  startDate: string,
+  startDate: string,         // 대출시작일
+  firstPaymentDate: string,  // 최초결제일자
+  paymentDay: number,        // 결제일자 (1~31)
   installmentId: string,
 ): InstallmentScheduleInsert[] {
   const monthly = new Decimal(annualRate).div(12)
-  const loan = new Decimal(loanAmount)
-  const schedule: InstallmentScheduleInsert[] = []
+  const daily   = new Decimal(annualRate).div(365)
+  const loan    = new Decimal(loanAmount)
   let remaining = loan
+  let no = 1
+  const schedule: InstallmentScheduleInsert[] = []
 
-  const repayPeriod = loanPeriod - gracePeriod // 실제 상환 개월
+  const days = differenceInDays(parseISO(firstPaymentDate), parseISO(startDate))
+  const repayPeriod = loanPeriod - gracePeriod
 
-  for (let i = 1; i <= loanPeriod; i++) {
-    const dueDate = format(addMonths(parseISO(startDate), i - 1), 'yyyy-MM-dd')
-    const interest = remaining.mul(monthly).toDecimalPlaces(0, Decimal.ROUND_FLOOR)
-    let principal = new Decimal(0)
-    let pi = new Decimal(0)
+  // ── 원리금균등: 대출금 전체 기간 기준 PMT 1회 계산 (고정) ──
+  let fixedPmt = new Decimal(0)
+  if (repaymentType !== '원금균등' && !monthly.isZero() && loanPeriod > 0) {
+    const factor = monthly.plus(1).pow(loanPeriod)
+    fixedPmt = loan.mul(monthly).mul(factor).div(factor.minus(1)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+  }
+
+  // ── 1회차 원금 (거치기간 없을 때만 원금 포함) ──
+  let p1 = new Decimal(0)
+  if (gracePeriod === 0 && repayPeriod > 0) {
+    if (repaymentType === '원금균등') {
+      p1 = loan.div(loanPeriod).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+    } else {
+      if (monthly.isZero()) {
+        p1 = loan.div(loanPeriod).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+      } else {
+        // 원리금균등 1회차 원금 = PMT - (30일 일할이자 or 표준월이자)
+        if (days > 30) {
+          p1 = fixedPmt.minus(loan.mul(daily).mul(30).toDecimalPlaces(0, Decimal.ROUND_HALF_UP))
+        } else {
+          p1 = fixedPmt.minus(loan.mul(monthly).toDecimalPlaces(0, Decimal.ROUND_HALF_UP))
+        }
+        if (p1.lessThan(0)) p1 = new Decimal(0)
+      }
+    }
+  }
+
+  // ── 1회차 이자: 일할 기준 (30일 분기) ──
+  const i1 = calcFirstInterest(loan, monthly, daily, days)
+
+  remaining = remaining.minus(p1)
+  if (remaining.lessThan(0)) remaining = new Decimal(0)
+
+  schedule.push({
+    installment_id: installmentId,
+    installment_no: no++,
+    due_date: firstPaymentDate,
+    principal: p1.toNumber(),
+    interest: i1.toNumber(),
+    principal_interest: p1.plus(i1).toNumber(),
+    remaining_balance: remaining.toNumber(),
+    is_paid: false,
+  })
+
+  // ── 2회차~loanPeriod: 정상 원리금균등(고정 PMT) 또는 원금균등 ──
+  for (let i = 2; i <= loanPeriod; i++) {
+    const dueDate  = calcDueDate(firstPaymentDate, i - 1, paymentDay)
+    const interest = remaining.mul(monthly).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+    let principal  = new Decimal(0)
+    let pi         = new Decimal(0)
 
     if (i <= gracePeriod) {
-      // 거치 기간: 이자만 납부
+      // 거치 기간: 이자만
       pi = interest
-    } else if (repaymentType === '원리금균등') {
-      // 원리금균등: PMT 공식
-      if (monthly.isZero()) {
-        principal = loan.div(repayPeriod).toDecimalPlaces(0, Decimal.ROUND_FLOOR)
-      } else {
-        const factor = monthly.plus(1).pow(repayPeriod)
-        const pmt = loan.mul(monthly).mul(factor).div(factor.minus(1)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
-        principal = pmt.minus(interest)
-      }
-      pi = principal.plus(interest)
     } else {
-      // 원금균등: 매달 동일 원금
-      principal = loan.div(repayPeriod).toDecimalPlaces(0, Decimal.ROUND_FLOOR)
+      if (repaymentType === '원금균등') {
+        principal = loan.div(loanPeriod).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+      } else {
+        // 고정 PMT 사용: principal = PMT - interest
+        // 마지막 회차는 잔액 전부 상환 (원/이자 오차 청산)
+        if (i === loanPeriod) {
+          principal = remaining
+        } else {
+          principal = fixedPmt.minus(interest)
+          if (principal.lessThan(0)) principal = new Decimal(0)
+          if (principal.greaterThan(remaining)) principal = remaining
+        }
+      }
       pi = principal.plus(interest)
     }
 
@@ -58,7 +136,7 @@ function generateSchedule(
 
     schedule.push({
       installment_id: installmentId,
-      installment_no: i,
+      installment_no: no++,
       due_date: dueDate,
       principal: principal.toNumber(),
       interest: interest.toNumber(),
@@ -67,6 +145,7 @@ function generateSchedule(
       is_paid: false,
     })
   }
+
   return schedule
 }
 
@@ -79,6 +158,8 @@ const EMPTY_FORM: InstallmentInsert = {
   repayment_type: '원리금균등',
   creditor_name: '',
   start_date: format(new Date(), 'yyyy-MM-dd'),
+  first_payment_date: format(addMonths(new Date(), 1), 'yyyy-MM-') + '25',
+  payment_day: 25,
 }
 
 export default function InstallmentsPage() {
@@ -181,6 +262,8 @@ export default function InstallmentsPage() {
       repayment_type: inst.repayment_type,
       creditor_name: inst.creditor_name,
       start_date: inst.start_date,
+      first_payment_date: inst.first_payment_date ?? EMPTY_FORM.first_payment_date,
+      payment_day: inst.payment_day ?? EMPTY_FORM.payment_day,
     })
     setError('')
     setModalOpen(true)
@@ -190,6 +273,9 @@ export default function InstallmentsPage() {
     e.preventDefault(); setError(''); setSaving(true)
     try {
       if (!form.vehicle_id) throw new Error('차량을 선택해 주세요.')
+
+      const firstPaymentDate = form.first_payment_date || EMPTY_FORM.first_payment_date!
+      const paymentDay = Number(form.payment_day) || 25
 
       if (editingId) {
         // 수정: 할부정보 업데이트 + 스케줄 재생성
@@ -204,6 +290,8 @@ export default function InstallmentsPage() {
             repayment_type: form.repayment_type,
             creditor_name: form.creditor_name || null,
             start_date: form.start_date,
+            first_payment_date: firstPaymentDate,
+            payment_day: paymentDay,
           })
           .eq('id', editingId)
         if (updErr) throw updErr
@@ -212,7 +300,8 @@ export default function InstallmentsPage() {
         await supabase.from('installment_schedule').delete().eq('installment_id', editingId)
         const scheduleRows = generateSchedule(
           Number(form.loan_amount), Number(form.loan_period), Number(form.grace_period),
-          Number(form.interest_rate), form.repayment_type ?? '원리금균등', form.start_date, editingId,
+          Number(form.interest_rate), form.repayment_type ?? '원리금균등',
+          form.start_date, firstPaymentDate, paymentDay, editingId,
         )
         const { error: schErr } = await supabase.from('installment_schedule').insert(scheduleRows)
         if (schErr) throw schErr
@@ -232,13 +321,16 @@ export default function InstallmentsPage() {
             repayment_type: form.repayment_type,
             creditor_name: form.creditor_name || null,
             start_date: form.start_date,
+            first_payment_date: firstPaymentDate,
+            payment_day: paymentDay,
           })
           .select().single()
         if (instErr || !inst) throw instErr ?? new Error('저장 실패')
 
         const scheduleRows = generateSchedule(
           Number(form.loan_amount), Number(form.loan_period), Number(form.grace_period),
-          Number(form.interest_rate), form.repayment_type ?? '원리금균등', form.start_date, inst.id,
+          Number(form.interest_rate), form.repayment_type ?? '원리금균등',
+          form.start_date, firstPaymentDate, paymentDay, inst.id,
         )
         const { error: schErr } = await supabase.from('installment_schedule').insert(scheduleRows)
         if (schErr) throw schErr
@@ -512,6 +604,7 @@ export default function InstallmentsPage() {
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                {/* 1. 차량 */}
                 <div className="col-span-2">
                   <Field label="차량 *">
                     <select className={ic} value={form.vehicle_id} onChange={(e) => setForm({ ...form, vehicle_id: e.target.value })} required>
@@ -520,24 +613,74 @@ export default function InstallmentsPage() {
                     </select>
                   </Field>
                 </div>
-                <Field label="거래처">
-                  <input className={ic} value={form.creditor_name ?? ''} onChange={(e) => setForm({ ...form, creditor_name: e.target.value })} placeholder="예: 캐피탈, 리스사 등" />
-                </Field>
+                {/* 2. 대출시작일 / 3. 대출기간 */}
                 <Field label="대출시작일 *">
                   <input type="date" className={ic} value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} required />
-                </Field>
-                <Field label="대출금액 (원) *">
-                  <input type="number" className={ic} value={form.loan_amount} onChange={(e) => setForm({ ...form, loan_amount: Number(e.target.value) })} required min={1} />
                 </Field>
                 <Field label="대출기간 (개월) *">
                   <input type="number" className={ic} value={form.loan_period} onChange={(e) => setForm({ ...form, loan_period: Number(e.target.value) })} required min={1} max={360} />
                 </Field>
+                {/* 4. 대출금액 / 5. 거치기간 */}
+                <Field label="대출금액 (원) *">
+                  <AmountInput
+                    value={form.loan_amount}
+                    onChange={(v) => setForm({ ...form, loan_amount: v })}
+                    placeholder="예: 50,000,000"
+                    required
+                  />
+                </Field>
                 <Field label="거치기간 (개월)">
                   <input type="number" className={ic} value={form.grace_period} onChange={(e) => setForm({ ...form, grace_period: Number(e.target.value) })} min={0} />
                 </Field>
-                <Field label="연금리 (예: 0.045 = 4.5%)">
-                  <input type="number" className={ic} value={form.interest_rate} onChange={(e) => setForm({ ...form, interest_rate: Number(e.target.value) })} step={0.001} min={0} max={1} />
+                {/* 6. 연금리 (% 입력) */}
+                <Field label="연금리 (%)">
+                  <div className="relative">
+                    <input
+                      type="number"
+                      className={ic + ' pr-8'}
+                      value={form.interest_rate ? Number((Number(form.interest_rate) * 100).toFixed(4)).toString() : ''}
+                      onChange={(e) => setForm({ ...form, interest_rate: Number(e.target.value) / 100 })}
+                      step={0.01}
+                      min={0}
+                      max={100}
+                      placeholder="예: 4.5"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">%</span>
+                  </div>
                 </Field>
+                {/* 거래처 (오른쪽 배치) */}
+                <Field label="거래처">
+                  <input className={ic} value={form.creditor_name ?? ''} onChange={(e) => setForm({ ...form, creditor_name: e.target.value })} placeholder="예: 캐피탈, 리스사 등" />
+                </Field>
+                {/* 7. 최초결제일자 / 8. 결제일자 */}
+                <Field label="최초결제일자 *">
+                  <input
+                    type="date"
+                    className={ic}
+                    value={form.first_payment_date ?? ''}
+                    onChange={(e) => {
+                      const d = e.target.value
+                      const day = d ? new Date(d).getDate() : (form.payment_day ?? 25)
+                      setForm({ ...form, first_payment_date: d, payment_day: day })
+                    }}
+                    required
+                  />
+                </Field>
+                <Field label="결제일자 (매월)">
+                  <div className="relative">
+                    <input
+                      type="number"
+                      className={ic + ' pr-8'}
+                      value={form.payment_day ?? ''}
+                      onChange={(e) => setForm({ ...form, payment_day: Number(e.target.value) })}
+                      min={1}
+                      max={31}
+                      placeholder="예: 25"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">일</span>
+                  </div>
+                </Field>
+                {/* 9. 상환방식 */}
                 <div className="col-span-2">
                   <Field label="상환방식">
                     <select className={ic} value={form.repayment_type} onChange={(e) => setForm({ ...form, repayment_type: e.target.value as RepaymentType })}>
@@ -551,17 +694,83 @@ export default function InstallmentsPage() {
 
               {/* 미리보기 */}
               {form.loan_amount > 0 && form.loan_period > 0 && (
-                <div className="bg-blue-50 rounded-xl px-4 py-3 text-sm text-blue-800">
-                  <p className="font-medium mb-1">스케줄 미리보기</p>
-                  <p>총 {form.loan_period}회차 · 거치 {form.grace_period}개월 · 상환 {Number(form.loan_period) - Number(form.grace_period)}개월</p>
+                <div className="bg-blue-50 rounded-xl px-4 py-3 text-sm text-blue-800 space-y-1">
+                  <p className="font-medium">스케줄 미리보기</p>
                   {(() => {
-                    const monthly = new Decimal(form.interest_rate ?? 0).div(12)
-                    const repayPeriod = Number(form.loan_period) - Number(form.grace_period)
-                    if (monthly.isZero() || repayPeriod <= 0) return null
+                    const loanPeriod = Number(form.loan_period)
+                    const gracePeriod = Number(form.grace_period)
+                    const annualRate = Number(form.interest_rate ?? 0)
+                    const repaymentType = form.repayment_type ?? '원리금균등'
                     const loan = new Decimal(form.loan_amount)
-                    const factor = monthly.plus(1).pow(repayPeriod)
-                    const pmt = loan.mul(monthly).mul(factor).div(factor.minus(1)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
-                    return <p className="mt-1">월 납부액(원리금균등): <strong>{pmt.toLocaleString()}원</strong></p>
+                    const monthly = new Decimal(annualRate).div(12)
+                    const daily   = new Decimal(annualRate).div(365)
+                    const repayPeriod = loanPeriod - gracePeriod
+
+                    const days = (form.start_date && form.first_payment_date)
+                      ? differenceInDays(parseISO(form.first_payment_date), parseISO(form.start_date))
+                      : 0
+
+                    // ── 고정 PMT (대출금 전체 기간 기준, 1회 계산) ──
+                    let fixedPmt: Decimal | null = null
+                    if (repaymentType !== '원금균등' && !monthly.isZero() && loanPeriod > 0) {
+                      const factor = monthly.plus(1).pow(loanPeriod)
+                      fixedPmt = loan.mul(monthly).mul(factor).div(factor.minus(1)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+                    }
+
+                    // ── 1회차 원금 ──
+                    let p1 = new Decimal(0)
+                    if (gracePeriod === 0 && repayPeriod > 0) {
+                      if (repaymentType === '원금균등') {
+                        p1 = loan.div(loanPeriod).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+                      } else if (fixedPmt && !monthly.isZero()) {
+                        // 원리금균등 1회차 원금 = PMT - (30일 일할이자 or 표준월이자)
+                        if (days > 30) {
+                          p1 = fixedPmt.minus(loan.mul(daily).mul(30).toDecimalPlaces(0, Decimal.ROUND_HALF_UP))
+                        } else {
+                          p1 = fixedPmt.minus(loan.mul(monthly).toDecimalPlaces(0, Decimal.ROUND_HALF_UP))
+                        }
+                        if (p1.lessThan(0)) p1 = new Decimal(0)
+                      } else {
+                        p1 = loan.div(loanPeriod).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+                      }
+                    }
+
+                    // ── 1회차 이자 (30일 분기) ──
+                    const i1 = calcFirstInterest(loan, monthly, daily, days)
+                    const pi1 = p1.plus(i1)
+
+                    // ── 2회차~ 표시: 고정 PMT(원리금균등) 또는 월 원금(원금균등) ──
+                    const monthlyPrincipal = repaymentType === '원금균등'
+                      ? loan.div(loanPeriod).toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+                      : null
+
+                    // ── 이자 설명 ──
+                    let interestNote = ''
+                    if (days <= 0) interestNote = '표준 1개월 이자'
+                    else interestNote = `일할이자 ${days}일`
+
+                    return (
+                      <>
+                        <p>
+                          총 <strong>{loanPeriod}</strong>회차
+                          {` · 거치 ${gracePeriod}개월 · 상환 ${repayPeriod}개월`}
+                          {form.payment_day ? ` · 매월 ${form.payment_day}일` : ''}
+                        </p>
+                        <div className="border-t border-blue-200 pt-1 mt-1 space-y-0.5">
+                          <p className="font-semibold text-blue-900">1회차 납입액 ({interestNote})</p>
+                          <p>원금: <strong>{p1.toNumber().toLocaleString()}원</strong>
+                             &nbsp;·&nbsp;이자: <strong>{i1.toNumber().toLocaleString()}원</strong>
+                          </p>
+                          <p>합계: <strong className="text-blue-700">{pi1.toNumber().toLocaleString()}원</strong></p>
+                        </div>
+                        {(fixedPmt || monthlyPrincipal) && (
+                          <div className="border-t border-blue-200 pt-1 mt-1">
+                            {fixedPmt && <p>2회차~ 월 원리금 (원리금균등): <strong>{fixedPmt.toNumber().toLocaleString()}원</strong></p>}
+                            {monthlyPrincipal && <p>월 원금 (원금균등): <strong>{monthlyPrincipal.toNumber().toLocaleString()}원</strong></p>}
+                          </div>
+                        )}
+                      </>
+                    )
                   })()}
                 </div>
               )}
@@ -587,6 +796,45 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="text-sm font-medium text-gray-700">{label}</label>
       {children}
     </div>
+  )
+}
+
+// ── 금액 입력 컴포넌트: 0일 때 빈값 표시, 입력 시 천단위 콤마, 저장 시 숫자 ──
+function AmountInput({
+  value,
+  onChange,
+  placeholder,
+  required,
+}: {
+  value: number
+  onChange: (v: number) => void
+  placeholder?: string
+  required?: boolean
+}) {
+  const [raw, setRaw] = useState(() => value > 0 ? value.toLocaleString() : '')
+
+  // 외부(폼 초기화/수정 오픈)에서 value가 바뀌면 동기화
+  useEffect(() => {
+    setRaw(value > 0 ? value.toLocaleString() : '')
+  }, [value])
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const stripped = e.target.value.replace(/,/g, '').replace(/[^0-9]/g, '')
+    const num = stripped === '' ? 0 : Number(stripped)
+    setRaw(num > 0 ? num.toLocaleString() : '')
+    onChange(num)
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      className={ic}
+      value={raw}
+      onChange={handleChange}
+      placeholder={placeholder}
+      required={required}
+    />
   )
 }
 

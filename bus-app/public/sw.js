@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kn-bus-v2'
+const CACHE_NAME = 'kn-bus-v3'
 
 // 오프라인에서도 사용 가능하도록 캐싱할 핵심 경로
 const STATIC_ASSETS = [
@@ -41,12 +41,11 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // 정적 자산 → Cache First
+  // 정적 자산(이미지·폰트만) → Cache First
+  // ※ script/style 은 캐싱 제외: 코드 변경 시 구버전 청크 참조 오류 방지
   if (
     request.destination === 'image' ||
-    request.destination === 'font' ||
-    request.destination === 'style' ||
-    request.destination === 'script'
+    request.destination === 'font'
   ) {
     event.respondWith(
       caches.match(request).then(

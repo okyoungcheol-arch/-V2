@@ -19,6 +19,8 @@ type StagedRow = {
   tempId: string
   operation_date: string
   route_code: string
+  departure_time: string
+  origin: string
   plate_number: string
   driver_name: string
   change_reason: string
@@ -33,6 +35,8 @@ type DbDispatch = {
   id: string
   operation_date: string
   route_code: string | null
+  departure_time: string | null
+  origin: string | null
   plate_number: string | null
   driver_name: string | null
   change_reason: string | null
@@ -84,6 +88,8 @@ const SAVED_PLATES_KEY = 'bus_saved_plates'
 const EMPTY_TOUR: Omit<StagedRow, 'tempId'> = {
   operation_date: format(new Date(), 'yyyy-MM-dd'),
   route_code: 'R-일일',
+  departure_time: '',
+  origin: '',
   plate_number: '',
   driver_name: '',
   change_reason: '',
@@ -92,6 +98,22 @@ const EMPTY_TOUR: Omit<StagedRow, 'tempId'> = {
   vat_included: false,
   operation_days: 1,
   notes: '',
+}
+
+const EMPTY_DB_EDIT: Omit<DbDispatch, 'id'> = {
+  operation_date: '',
+  route_code: null,
+  departure_time: null,
+  origin: null,
+  plate_number: null,
+  driver_name: null,
+  change_reason: null,
+  fare_amount: 0,
+  driver_allowance: 0,
+  vat_included: false,
+  operation_days: 1,
+  status: '배차',
+  notes: null,
 }
 
 /* ─────────────────────── Component ─────────────────────── */
@@ -136,10 +158,15 @@ export default function DispatchesPage() {
   const [tourOpen, setTourOpen]   = useState(false)
   const [tourForm, setTourForm]   = useState<Omit<StagedRow, 'tempId'>>(EMPTY_TOUR)
 
-  // 수정 팝업
+  // staged 수정 팝업
   const [editOpen, setEditOpen]     = useState(false)
   const [editTarget, setEditTarget] = useState<StagedRow | null>(null)
   const [editForm, setEditForm]     = useState<Omit<StagedRow, 'tempId'>>(EMPTY_TOUR)
+
+  // DB 수정 팝업
+  const [dbEditOpen, setDbEditOpen]     = useState(false)
+  const [dbEditTarget, setDbEditTarget] = useState<DbDispatch | null>(null)
+  const [dbEditForm, setDbEditForm]     = useState<Omit<DbDispatch, 'id'>>(EMPTY_DB_EDIT)
 
   // 정렬 상태
   const [summarySort, setSummarySort] = useState<SummarySort>({ key: 'date', dir: 'asc' })
@@ -169,8 +196,8 @@ export default function DispatchesPage() {
         id:             d.id,
         operation_date: d.operation_date,
         route_code:     d.route_code,
-        departure_time: route?.default_departure_time ?? null,
-        origin:         route?.origin ?? null,
+        departure_time: d.departure_time ?? route?.default_departure_time ?? null,
+        origin:         d.origin ?? route?.origin ?? null,
         destination:    route?.destination ?? null,
         plate_number:   d.plate_number,
         driver_name:    d.driver_name,
@@ -291,7 +318,7 @@ export default function DispatchesPage() {
     setCheckedIds(new Set())
     const { data, error } = await supabase
       .from('dispatches')
-      .select('id, operation_date, route_code, plate_number, driver_name, change_reason, fare_amount, driver_allowance, vat_included, operation_days, status, notes')
+      .select('id, operation_date, route_code, departure_time, origin, plate_number, driver_name, change_reason, fare_amount, driver_allowance, vat_included, operation_days, status, notes')
       .eq('operation_date', date)
       .order('route_code')
     if (error) console.error('dispatches 로드 오류:', error)
@@ -390,12 +417,45 @@ export default function DispatchesPage() {
     setTourOpen(false)
   }
 
-  /* ── 수정 팝업 열기 ── */
+  /* ── staged 수정 팝업 열기 ── */
   function openEdit(row: StagedRow) {
     setEditTarget(row)
     const { tempId: _tempId, ...rest } = row
     setEditForm(rest)
     setEditOpen(true)
+  }
+
+  /* ── DB 수정 팝업 열기 ── */
+  function openDbEdit(id: string) {
+    const row = dbDispatches.find((r) => r.id === id)
+    if (!row) return
+    setDbEditTarget(row)
+    const { id: _id, ...rest } = row
+    setDbEditForm(rest)
+    setDbEditOpen(true)
+  }
+
+  /* ── DB 수정 저장 ── */
+  async function handleDbEditSave() {
+    if (!dbEditTarget) return
+    const { error } = await supabase.from('dispatches').update({
+      operation_date:   dbEditForm.operation_date,
+      route_code:       dbEditForm.route_code,
+      departure_time:   dbEditForm.departure_time || null,
+      origin:           dbEditForm.origin || null,
+      plate_number:     dbEditForm.plate_number || null,
+      driver_name:      dbEditForm.driver_name || null,
+      change_reason:    dbEditForm.change_reason || null,
+      fare_amount:      Number(dbEditForm.fare_amount),
+      driver_allowance: Number(dbEditForm.driver_allowance),
+      vat_included:     dbEditForm.vat_included,
+      operation_days:   Number(dbEditForm.operation_days),
+      notes:            dbEditForm.notes || null,
+    }).eq('id', dbEditTarget.id)
+    if (error) { alert('수정 실패: ' + error.message); return }
+    setDbDispatches((prev) => prev.map((r) => r.id === dbEditTarget.id ? { ...r, ...dbEditForm } : r))
+    setDbEditOpen(false)
+    loadSummaries()
   }
 
   /* ── 수정 저장 ── */
@@ -426,6 +486,8 @@ export default function DispatchesPage() {
       const { error } = await supabase.from('dispatches').insert({
         operation_date:   row.operation_date,
         route_code:       row.route_code || null,
+        departure_time:   row.departure_time || null,
+        origin:           row.origin || null,
         plate_number:     row.plate_number || null,
         driver_name:      row.driver_name || null,
         change_reason:    row.change_reason || null,
@@ -722,13 +784,22 @@ export default function DispatchesPage() {
                             {row.change_reason ?? '-'}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={() => handleDbRowDelete(row.id)}
-                              className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50"
-                              title="삭제"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => openDbEdit(row.id)}
+                                className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50"
+                                title="수정"
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleDbRowDelete(row.id)}
+                                className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50"
+                                title="삭제"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -899,6 +970,12 @@ export default function DispatchesPage() {
                 <Field label="운행일수">
                   <input type="number" className={ic} min={1} value={tourForm.operation_days} onChange={(e) => setTourForm({ ...tourForm, operation_days: Number(e.target.value) })} />
                 </Field>
+                <Field label="출발시간">
+                  <input type="time" className={ic} value={tourForm.departure_time} onChange={(e) => setTourForm({ ...tourForm, departure_time: e.target.value })} />
+                </Field>
+                <Field label="출발지">
+                  <input type="text" className={ic} placeholder="출발지" value={tourForm.origin} onChange={(e) => setTourForm({ ...tourForm, origin: e.target.value })} />
+                </Field>
                 <Field label="차량번호">
                   <input type="text" className={ic} placeholder="예: 00가 0000" value={tourForm.plate_number} onChange={(e) => setTourForm({ ...tourForm, plate_number: e.target.value })} />
                 </Field>
@@ -972,6 +1049,65 @@ export default function DispatchesPage() {
             <div className="flex justify-end gap-3 px-6 pb-6">
               <button onClick={() => setEditOpen(false)} className="px-5 py-2.5 text-sm border border-gray-300 rounded-xl hover:bg-gray-50 min-h-[44px]">취소</button>
               <button onClick={handleEditSave} className="px-5 py-2.5 text-sm bg-[#1E40AF] text-white rounded-xl hover:bg-blue-800 min-h-[44px]">저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════ DB 배차 수정 팝업 ══════════════ */}
+      {dbEditOpen && dbEditTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h3 className="text-lg font-bold text-gray-900">배차 수정</h3>
+              <button onClick={() => setDbEditOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="운행일자">
+                  <input type="date" className={ic} value={dbEditForm.operation_date} onChange={(e) => setDbEditForm({ ...dbEditForm, operation_date: e.target.value })} />
+                </Field>
+                <Field label="노선코드">
+                  <input type="text" className={ic} value={dbEditForm.route_code} onChange={(e) => setDbEditForm({ ...dbEditForm, route_code: e.target.value })} />
+                </Field>
+                <Field label="출발시간">
+                  <input type="time" className={ic} value={dbEditForm.departure_time ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, departure_time: e.target.value })} />
+                </Field>
+                <Field label="출발지">
+                  <input type="text" className={ic} placeholder="출발지" value={dbEditForm.origin ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, origin: e.target.value })} />
+                </Field>
+                <Field label="차량번호">
+                  <input type="text" className={ic} placeholder="예: 00가 0000" value={dbEditForm.plate_number ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, plate_number: e.target.value })} />
+                </Field>
+                <Field label="기사이름">
+                  <input type="text" className={ic} placeholder="이름" value={dbEditForm.driver_name ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, driver_name: e.target.value })} />
+                </Field>
+                <Field label="운행금액">
+                  <input type="number" className={ic} min={0} value={dbEditForm.fare_amount} onChange={(e) => setDbEditForm({ ...dbEditForm, fare_amount: Number(e.target.value) })} />
+                </Field>
+                <Field label="기사수당">
+                  <input type="number" className={ic} min={0} value={dbEditForm.driver_allowance} onChange={(e) => setDbEditForm({ ...dbEditForm, driver_allowance: Number(e.target.value) })} />
+                </Field>
+                <Field label="운행일수">
+                  <input type="number" className={ic} min={1} value={dbEditForm.operation_days} onChange={(e) => setDbEditForm({ ...dbEditForm, operation_days: Number(e.target.value) })} />
+                </Field>
+              </div>
+              <Field label="변경사유">
+                <input type="text" className={ic} value={dbEditForm.change_reason ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, change_reason: e.target.value })} />
+              </Field>
+              <Field label="비고">
+                <input type="text" className={ic} value={dbEditForm.notes ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, notes: e.target.value })} />
+              </Field>
+              <div className="flex items-center gap-3 pt-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" checked={dbEditForm.vat_included} onChange={(e) => setDbEditForm({ ...dbEditForm, vat_included: e.target.checked })} className="w-4 h-4 accent-[#1E40AF]" />
+                  <span className="text-sm text-gray-700">부가세 포함</span>
+                </label>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 pb-6">
+              <button onClick={() => setDbEditOpen(false)} className="px-5 py-2.5 text-sm border border-gray-300 rounded-xl hover:bg-gray-50 min-h-[44px]">취소</button>
+              <button onClick={handleDbEditSave} className="px-5 py-2.5 text-sm bg-[#1E40AF] text-white rounded-xl hover:bg-blue-800 min-h-[44px]">저장</button>
             </div>
           </div>
         </div>

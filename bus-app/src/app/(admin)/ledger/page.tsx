@@ -7,9 +7,9 @@ import StandardDataTable, { Column } from '@/components/StandardDataTable'
 import { format } from 'date-fns'
 import { Plus, Pencil, Trash2, X } from 'lucide-react'
 
-const CATEGORIES = ['운행수입', '기사수당', '유류비', '할부금', '보험료', '수리비', '기타입금', '기타지출']
-
 const EMPTY_FORM: LedgerEntryInsert = {
+  bank_transaction_id: null,
+  serial_no: null,
   entry_date: format(new Date(), 'yyyy-MM-dd'),
   description: '',
   income: 0,
@@ -17,7 +17,7 @@ const EMPTY_FORM: LedgerEntryInsert = {
   balance: 0,
   vehicle_id: null,
   driver_id: null,
-  category: null,
+  manual_entry: 'N',
   notes: null,
 }
 
@@ -55,7 +55,6 @@ export default function LedgerPage() {
   useEffect(() => { load() }, [load])
 
   function openCreate() {
-    // 가장 최근 잔액을 기준으로 자동 계산 기반 설정
     const lastBalance = entries.length > 0
       ? [...entries].sort((a, b) => a.entry_date > b.entry_date ? -1 : 1)[0].balance
       : 0
@@ -69,15 +68,17 @@ export default function LedgerPage() {
   function openEdit(row: LedgerEntry) {
     setEditing(row)
     setForm({
-      entry_date: row.entry_date,
-      description: row.description,
-      income: row.income,
-      expense: row.expense,
-      balance: row.balance,
-      vehicle_id: row.vehicle_id,
-      driver_id: row.driver_id,
-      category: row.category,
-      notes: row.notes,
+      bank_transaction_id: row.bank_transaction_id,
+      serial_no:           row.serial_no,
+      entry_date:          row.entry_date,
+      description:         row.description,
+      income:              row.income,
+      expense:             row.expense,
+      balance:             row.balance,
+      vehicle_id:          row.vehicle_id,
+      driver_id:           row.driver_id,
+      manual_entry:        row.manual_entry ?? 'N',
+      notes:               row.notes,
     })
     setError(''); setModalOpen(true)
   }
@@ -93,13 +94,14 @@ export default function LedgerPage() {
     try {
       const payload: LedgerEntryInsert = {
         ...form,
-        income: Number(form.income),
-        expense: Number(form.expense),
-        balance: Number(form.balance),
-        vehicle_id: form.vehicle_id || null,
-        driver_id: form.driver_id || null,
-        category: form.category || null,
-        notes: form.notes || null,
+        income:             Number(form.income),
+        expense:            Number(form.expense),
+        balance:            Number(form.balance),
+        vehicle_id:         form.vehicle_id || null,
+        driver_id:          form.driver_id || null,
+        bank_transaction_id: form.bank_transaction_id || null,
+        manual_entry:       form.manual_entry || 'N',
+        notes:              form.notes || null,
       }
       if (editing) {
         const { error } = await supabase.from('ledger_entries').update(payload as LedgerEntryUpdate).eq('id', editing.id)
@@ -116,49 +118,42 @@ export default function LedgerPage() {
     }
   }
 
-  // 월 필터
   const filtered = entries.filter((e) =>
     !filterMonth || e.entry_date.startsWith(filterMonth)
   )
 
-  // 합계
-  const totalIncome = filtered.reduce((s, e) => s + e.income, 0)
+  const totalIncome  = filtered.reduce((s, e) => s + e.income,  0)
   const totalExpense = filtered.reduce((s, e) => s + e.expense, 0)
-  const netBalance = totalIncome - totalExpense
+  const netBalance   = totalIncome - totalExpense
 
   const columns: Column<LedgerEntry>[] = [
+    { key: 'bank_transaction_id', label: '은행거래ID', sortable: true,
+      render: (_, r) => r.bank_transactions?.description
+        ? <span className="text-xs text-blue-500 bg-blue-50 px-2 py-0.5 rounded">연결됨</span>
+        : '-' },
+    { key: 'serial_no', label: '일련번호', sortable: true,
+      render: (v) => v != null ? String(v) : '-' },
     { key: 'entry_date', label: '날짜', sortable: true },
     { key: 'description', label: '적요' },
-    {
-      key: 'category', label: '분류',
-      render: (v) => v
-        ? <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">{String(v)}</span>
-        : '-',
-    },
-    {
-      key: 'income', label: '수입',
+    { key: 'income', label: '수입', sortable: true,
       render: (v) => Number(v) > 0
         ? <span className="text-blue-700 font-medium">{Number(v).toLocaleString()}원</span>
-        : '-',
-    },
-    {
-      key: 'expense', label: '지출',
+        : '-' },
+    { key: 'expense', label: '지출', sortable: true,
       render: (v) => Number(v) > 0
         ? <span className="text-red-600 font-medium">{Number(v).toLocaleString()}원</span>
-        : '-',
-    },
-    {
-      key: 'balance', label: '잔액',
-      render: (v) => Number(v) !== 0 ? `${Number(v).toLocaleString()}원` : '-',
-    },
-    { key: 'vehicle_id', label: '차량', render: (_, r) => r.vehicles?.plate_number ?? '-' },
-    { key: 'driver_id', label: '기사', render: (_, r) => r.employees?.name ?? '-' },
-    {
-      key: 'bank_transaction_id', label: '은행연계',
-      render: (v) => v
-        ? <span className="text-xs text-blue-500 bg-blue-50 px-2 py-0.5 rounded">연결됨</span>
-        : '-',
-    },
+        : '-' },
+    { key: 'balance', label: '잔액', sortable: true,
+      render: (v) => Number(v) !== 0 ? `${Number(v).toLocaleString()}원` : '-' },
+    { key: 'vehicle_id', label: '차량번호',
+      render: (_, r) => r.vehicles?.plate_number ?? '-' },
+    { key: 'driver_id', label: '기사이름',
+      render: (_, r) => r.employees?.name ?? '-' },
+    { key: 'manual_entry', label: '수기입력',
+      render: (v) => v === 'Y'
+        ? <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">Y</span>
+        : '-' },
+    { key: 'notes', label: '비고', className: 'max-w-[150px] truncate' },
   ]
 
   return (
@@ -174,47 +169,51 @@ export default function LedgerPage() {
           </button>
         </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-8 py-6">
 
-      {/* 월 필터 + 합계 */}
-      <div className="flex items-center gap-4 mb-6 flex-wrap">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-600">월</label>
-          <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1E40AF]" />
-        </div>
-        <div className="flex gap-3">
-          {[
-            { label: '총 수입', value: totalIncome, color: 'text-blue-700' },
-            { label: '총 지출', value: totalExpense, color: 'text-red-600' },
-            { label: '순잔액', value: netBalance, color: netBalance >= 0 ? 'text-green-700' : 'text-red-600' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-center min-w-[120px]">
-              <p className="text-xs text-gray-500">{label}</p>
-              <p className={`text-sm font-bold mt-0.5 ${color}`}>{value.toLocaleString()}원</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <div className="flex-1 min-h-0 flex flex-col px-8 py-6 gap-4">
 
-      {loading ? (
-        <div className="text-center py-20 text-gray-400">불러오는 중...</div>
-      ) : (
-        <StandardDataTable
-          data={filtered}
-          columns={columns}
-          searchKeys={['description', 'category']}
-          searchPlaceholder="적요, 분류 검색"
-          emptyMessage="출납 내역이 없습니다."
-          actions={(row) => (
-            <div className="flex items-center gap-2 justify-end">
-              <button onClick={() => openEdit(row)} className="p-1.5 text-gray-400 hover:text-blue-600"><Pencil size={15} /></button>
-              <button onClick={() => handleDelete(row)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={15} /></button>
-            </div>
+        {/* 월 필터 + 합계 */}
+        <div className="flex-shrink-0 flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-600">월</label>
+            <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1E40AF]" />
+            <button onClick={() => setFilterMonth('')} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">전체</button>
+          </div>
+          <div className="flex gap-3">
+            {[
+              { label: '총 수입', value: totalIncome,  color: 'text-blue-700' },
+              { label: '총 지출', value: totalExpense, color: 'text-red-600' },
+              { label: '순잔액', value: netBalance,    color: netBalance >= 0 ? 'text-green-700' : 'text-red-600' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-center min-w-[120px]">
+                <p className="text-xs text-gray-500">{label}</p>
+                <p className={`text-sm font-bold mt-0.5 ${color}`}>{value.toLocaleString()}원</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0">
+          {loading ? (
+            <div className="text-center py-20 text-gray-400">불러오는 중...</div>
+          ) : (
+            <StandardDataTable
+              data={filtered}
+              columns={columns}
+              searchKeys={['description', 'notes']}
+              searchPlaceholder="적요, 비고 검색"
+              emptyMessage="출납 내역이 없습니다."
+              fillHeight
+              actions={(row) => (
+                <div className="flex items-center gap-2 justify-end">
+                  <button onClick={() => openEdit(row)} className="p-1.5 text-gray-400 hover:text-blue-600"><Pencil size={15} /></button>
+                  <button onClick={() => handleDelete(row)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={15} /></button>
+                </div>
+              )}
+            />
           )}
-        />
-      )}
-
+        </div>
       </div>
 
       {/* 등록/수정 모달 */}
@@ -228,50 +227,61 @@ export default function LedgerPage() {
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <Field label="날짜 *">
-                  <input type="date" className={ic} value={form.entry_date} onChange={(e) => setForm({ ...form, entry_date: e.target.value })} required />
+                  <input type="date" className={ic} value={form.entry_date}
+                    onChange={(e) => setForm({ ...form, entry_date: e.target.value })} required />
                 </Field>
-                <Field label="분류">
-                  <select className={ic} value={form.category ?? ''} onChange={(e) => setForm({ ...form, category: e.target.value || null })}>
-                    <option value="">선택</option>
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                <Field label="수기입력대상">
+                  <select className={ic} value={form.manual_entry ?? 'N'}
+                    onChange={(e) => setForm({ ...form, manual_entry: e.target.value })}>
+                    <option value="N">N</option>
+                    <option value="Y">Y</option>
                   </select>
                 </Field>
                 <div className="col-span-2">
                   <Field label="적요 *">
-                    <input className={ic} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} required placeholder="내용 입력" />
+                    <input className={ic} value={form.description}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })} required placeholder="내용 입력" />
                   </Field>
                 </div>
                 <Field label="수입 (원)">
-                  <input type="number" className={ic} value={form.income} onChange={(e) => {
-                    const income = Number(e.target.value)
-                    setForm({ ...form, income, balance: baseBalance + income - (form.expense ?? 0) })
-                  }} min={0} />
+                  <input type="number" className={ic} value={form.income || ''}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const income = Number(e.target.value)
+                      setForm({ ...form, income, balance: baseBalance + income - (form.expense ?? 0) })
+                    }} min={0} />
                 </Field>
                 <Field label="지출 (원)">
-                  <input type="number" className={ic} value={form.expense} onChange={(e) => {
-                    const expense = Number(e.target.value)
-                    setForm({ ...form, expense, balance: baseBalance + (form.income ?? 0) - expense })
-                  }} min={0} />
+                  <input type="number" className={ic} value={form.expense || ''}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const expense = Number(e.target.value)
+                      setForm({ ...form, expense, balance: baseBalance + (form.income ?? 0) - expense })
+                    }} min={0} />
                 </Field>
                 <Field label="잔액 (원)">
                   {!editing ? (
                     <>
-                      <input type="number" readOnly className={`${ic} bg-blue-50 text-blue-700 font-medium`} value={form.balance} onChange={() => {}} />
+                      <input type="number" readOnly className={`${ic} bg-blue-50 text-blue-700 font-medium`}
+                        value={form.balance} onChange={() => {}} />
                       <p className="text-xs text-gray-400 mt-0.5">이전 잔액 + 수입 - 지출로 자동 계산</p>
                     </>
                   ) : (
-                    <input type="number" className={ic} value={form.balance} onChange={(e) => setForm({ ...form, balance: Number(e.target.value) })} />
+                    <input type="number" className={ic} value={form.balance}
+                      onChange={(e) => setForm({ ...form, balance: Number(e.target.value) })} />
                   )}
                 </Field>
-                <Field label="차량">
-                  <select className={ic} value={form.vehicle_id ?? ''} onChange={(e) => setForm({ ...form, vehicle_id: e.target.value || null })}>
+                <Field label="차량번호">
+                  <select className={ic} value={form.vehicle_id ?? ''}
+                    onChange={(e) => setForm({ ...form, vehicle_id: e.target.value || null })}>
                     <option value="">선택</option>
                     {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plate_number}</option>)}
                   </select>
                 </Field>
                 <div className="col-span-2">
-                  <Field label="기사">
-                    <select className={ic} value={form.driver_id ?? ''} onChange={(e) => setForm({ ...form, driver_id: e.target.value || null })}>
+                  <Field label="기사이름(직원명)">
+                    <select className={ic} value={form.driver_id ?? ''}
+                      onChange={(e) => setForm({ ...form, driver_id: e.target.value || null })}>
                       <option value="">선택</option>
                       {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
@@ -279,12 +289,15 @@ export default function LedgerPage() {
                 </div>
               </div>
               <Field label="비고">
-                <textarea className={ic + ' resize-none'} rows={2} value={form.notes ?? ''} onChange={(e) => setForm({ ...form, notes: e.target.value || null })} />
+                <textarea className={ic + ' resize-none'} rows={2} value={form.notes ?? ''}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value || null })} />
               </Field>
               {error && <p className="text-sm text-red-600 bg-red-50 px-4 py-3 rounded-xl">{error}</p>}
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setModalOpen(false)} className="px-5 py-2.5 text-sm border border-gray-300 rounded-xl hover:bg-gray-50 min-h-[44px]">취소</button>
-                <button type="submit" disabled={saving} className="px-5 py-2.5 text-sm bg-[#1E40AF] text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 min-h-[44px]">
+                <button type="button" onClick={() => setModalOpen(false)}
+                  className="px-5 py-2.5 text-sm border border-gray-300 rounded-xl hover:bg-gray-50 min-h-[44px]">취소</button>
+                <button type="submit" disabled={saving}
+                  className="px-5 py-2.5 text-sm bg-[#1E40AF] text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 min-h-[44px]">
                   {saving ? '저장 중...' : '저장'}
                 </button>
               </div>

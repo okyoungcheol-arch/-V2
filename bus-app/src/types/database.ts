@@ -181,8 +181,13 @@ export interface Route {
   route_type: RouteType
   day_type: DayType
   default_departure_time: string | null
+  distance_km: number | null
+  operation_days: number | null
+  plate_number: string | null
+  driver_name: string | null
+  effective_start_date: string | null
+  effective_end_date: string | null
   client_id: string | null
-  status: RouteStatus
   notes: string | null
   created_at: string
   // 조인 데이터
@@ -200,8 +205,13 @@ export interface RouteInsert {
   route_type?: RouteType
   day_type?: DayType
   default_departure_time?: string | null
+  distance_km?: number | null
+  operation_days?: number | null
+  plate_number?: string | null
+  driver_name?: string | null
+  effective_start_date?: string | null
+  effective_end_date?: string | null
   client_id?: string | null
-  status?: RouteStatus
   notes?: string | null
 }
 
@@ -297,6 +307,8 @@ export interface Installment {
   repayment_type: RepaymentType
   creditor_name: string | null
   start_date: string
+  first_payment_date: string | null  // 최초결제일자
+  payment_day: number | null         // 결제일자 (1~31)
   notes: string | null
   created_at: string
   // 조인 데이터
@@ -312,6 +324,8 @@ export interface InstallmentInsert {
   repayment_type?: RepaymentType
   creditor_name?: string | null
   start_date: string
+  first_payment_date?: string | null  // 최초결제일자
+  payment_day?: number | null         // 결제일자 (1~31)
   notes?: string | null
 }
 
@@ -353,26 +367,42 @@ export type InstallmentScheduleUpdate = Partial<InstallmentScheduleInsert>
 // ============================================================
 export interface BankTransaction {
   id: string
-  account_info: string | null
-  transaction_at: string
-  deposit: number
-  withdrawal: number
-  balance: number
-  description: string | null
-  creditor_name: string | null
-  bank_type: string | null
+  bank_id: string | null          // 자동생성 거래ID (BX1_YYYYMMDDNNN)
+  bank_name: string | null        // 은행명
+  account_number: string | null   // 계좌번호
+  transaction_date: string        // 거래일자 (YYYY-MM-DD)
+  transaction_time: string | null // 거래시각 (HH:MM:SS)
+  description: string | null      // 적요
+  withdrawal: number              // 출금액(원)
+  deposit: number                 // 입금액(원)
+  balance: number                 // 잔액(원)
+  branch: string | null           // 거래점
+  counterpart_account: string | null // 상대계좌번호
+  counterpart_bank: string | null    // 상대은행
+  counterpart_name: string | null    // 상대계좌예금주명
+  memo: string | null             // 메모
+  settlement_month: string | null // 정산월 (YYYY-MM)
+  notes: string | null            // 비고
   created_at: string
 }
 
 export interface BankTransactionInsert {
-  account_info?: string | null
-  transaction_at: string
-  deposit?: number
-  withdrawal?: number
-  balance?: number
+  bank_id?: string | null
+  bank_name?: string | null
+  account_number?: string | null
+  transaction_date: string
+  transaction_time?: string | null
   description?: string | null
-  creditor_name?: string | null
-  bank_type?: string | null
+  withdrawal?: number
+  deposit?: number
+  balance?: number
+  branch?: string | null
+  counterpart_account?: string | null
+  counterpart_bank?: string | null
+  counterpart_name?: string | null
+  memo?: string | null
+  settlement_month?: string | null
+  notes?: string | null
 }
 
 export type BankTransactionUpdate = Partial<BankTransactionInsert>
@@ -382,16 +412,17 @@ export type BankTransactionUpdate = Partial<BankTransactionInsert>
 // ============================================================
 export interface LedgerEntry {
   id: string
-  entry_date: string
-  description: string
-  income: number
-  expense: number
-  balance: number
-  vehicle_id: string | null
-  driver_id: string | null
-  bank_transaction_id: string | null
-  category: string | null
-  notes: string | null
+  bank_transaction_id: string | null  // 은행거래ID (FK)
+  serial_no: number | null            // 일련번호
+  entry_date: string                  // 날짜
+  description: string                 // 적요
+  income: number                      // 수입
+  expense: number                     // 지출
+  balance: number                     // 잔액
+  vehicle_id: string | null           // 차량번호 (FK)
+  driver_id: string | null            // 기사이름 (FK)
+  manual_entry: string | null         // 수기입력대상여부 (Y/N)
+  notes: string | null                // 비고
   created_at: string
   // 조인 데이터
   vehicles?: Pick<Vehicle, 'id' | 'plate_number'> | null
@@ -400,6 +431,8 @@ export interface LedgerEntry {
 }
 
 export interface LedgerEntryInsert {
+  bank_transaction_id?: string | null
+  serial_no?: number | null
   entry_date: string
   description: string
   income?: number
@@ -407,8 +440,7 @@ export interface LedgerEntryInsert {
   balance?: number
   vehicle_id?: string | null
   driver_id?: string | null
-  bank_transaction_id?: string | null
-  category?: string | null
+  manual_entry?: string | null
   notes?: string | null
 }
 
