@@ -8,12 +8,22 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-export async function fetchBankTransactions(): Promise<BankTransaction[]> {
-  const { data, error } = await supabase
+export async function fetchBankTransactions(month?: string): Promise<BankTransaction[]> {
+  let query = supabase
     .from('bank_transactions')
     .select('*')
     .order('transaction_date', { ascending: false })
     .order('transaction_time', { ascending: false })
+
+  if (month) {
+    const [year, mon] = month.split('-').map(Number)
+    const start = `${year}-${String(mon).padStart(2, '0')}-01`
+    const lastDay = new Date(year, mon, 0).getDate()
+    const end = `${year}-${String(mon).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+    query = query.gte('transaction_date', start).lte('transaction_date', end)
+  }
+
+  const { data, error } = await query
   if (error) throw new Error(error.message)
   return (data ?? []) as BankTransaction[]
 }

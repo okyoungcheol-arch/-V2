@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { CalendarDays, Wallet, LogOut } from 'lucide-react'
 
 const tabs = [
-  { href: '/schedule', label: '배차 일정', icon: CalendarDays },
+  { href: '/schedule', label: '배차관리', icon: CalendarDays },
   { href: '/earnings', label: '수당 내역', icon: Wallet },
 ]
 

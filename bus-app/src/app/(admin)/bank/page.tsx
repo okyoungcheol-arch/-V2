@@ -212,10 +212,10 @@ export default function BankPage() {
   const [uploading,    setUploading]    = useState(false)
   const [uploadResult, setUploadResult] = useState<{ success: number; skip: number } | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (month?: string) => {
     setLoading(true)
     try {
-      const data = await fetchBankTransactions()
+      const data = await fetchBankTransactions(month)
       setTransactions(data)
     } catch (err) {
       alert('조회 오류: ' + String(err))
@@ -223,7 +223,7 @@ export default function BankPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(filterMonth) }, [filterMonth])
 
   // ── CSV 내보내기
   function escapeCSVCell(value: string | number | null | undefined) {
@@ -368,12 +368,13 @@ export default function BankPage() {
       }
 
       setUploadResult({ success: toInsert.length, skip })
-      // 업로드된 데이터의 첫 번째 월로 필터 이동
       if (toInsert.length > 0) {
         const firstMonth = toInsert[0].transaction_date.slice(0, 7)
         setFilterMonth(firstMonth)
+        // filterMonth 변경이 useEffect를 통해 load를 트리거하므로 별도 호출 불필요
+      } else {
+        load(filterMonth)
       }
-      load()
     } catch (err) {
       alert('CSV 파일 처리 중 오류: ' + String(err))
     } finally {
@@ -383,8 +384,8 @@ export default function BankPage() {
     }
   }
 
-  // ── 필터·합계
-  const filtered = transactions.filter((t) => !filterMonth || t.transaction_date.startsWith(filterMonth))
+  // ── 합계 (DB에서 이미 월 필터 적용됨)
+  const filtered = transactions
   const totalDeposit    = filtered.reduce((s, t) => s + t.deposit,    0)
   const totalWithdrawal = filtered.reduce((s, t) => s + t.withdrawal, 0)
 
