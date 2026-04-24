@@ -278,7 +278,7 @@ export default function DispatchesPage() {
       created_at: string
       employees: { last_login_at: string | null } | null
     }
-    const rows = (data ?? []) as RawRow[]
+    const rows = (data ?? []) as unknown as RawRow[]
 
     setSummaries(
       weekDates.map((date) => {
@@ -394,17 +394,19 @@ export default function DispatchesPage() {
     setStaged((prev) => [
       ...prev,
       ...matched.map((r) => ({
-        tempId:          crypto.randomUUID(),
-        operation_date:  regularDate,
-        route_code:      r.route_code,
-        plate_number:    r.plate_number ?? '',
-        driver_name:     r.driver_name ?? '',
-        change_reason:   '',
-        fare_amount:     r.fare_amount ?? 0,
+        tempId:           crypto.randomUUID(),
+        operation_date:   regularDate,
+        route_code:       r.route_code,
+        departure_time:   r.default_departure_time ?? '',
+        origin:           r.origin ?? '',
+        plate_number:     r.plate_number ?? '',
+        driver_name:      r.driver_name ?? '',
+        change_reason:    '',
+        fare_amount:      r.fare_amount ?? 0,
         driver_allowance: r.driver_allowance ?? 0,
-        vat_included:    false,
-        operation_days:  1,
-        notes:           '',
+        vat_included:     false,
+        operation_days:   1,
+        notes:            '',
       })),
     ])
     setRegularOpen(false)
@@ -1068,7 +1070,7 @@ export default function DispatchesPage() {
                   <input type="date" className={ic} value={dbEditForm.operation_date} onChange={(e) => setDbEditForm({ ...dbEditForm, operation_date: e.target.value })} />
                 </Field>
                 <Field label="노선코드">
-                  <input type="text" className={ic} value={dbEditForm.route_code} onChange={(e) => setDbEditForm({ ...dbEditForm, route_code: e.target.value })} />
+                  <input type="text" className={ic} value={dbEditForm.route_code ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, route_code: e.target.value })} />
                 </Field>
                 <Field label="출발시간">
                   <input type="time" className={ic} value={dbEditForm.departure_time ?? ''} onChange={(e) => setDbEditForm({ ...dbEditForm, departure_time: e.target.value })} />
