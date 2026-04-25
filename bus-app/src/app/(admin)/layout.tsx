@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   LayoutDashboard,
   CalendarDays,
@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Download,
 } from 'lucide-react'
 
 const navItems = [
@@ -33,6 +34,24 @@ const navItems = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
+  const [installPrompt, setInstallPrompt] = useState<Event | null>(null)
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault()
+      setInstallPrompt(e)
+    }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
+  }, [])
+
+  async function handleInstall() {
+    if (!installPrompt) return
+    const prompt = installPrompt as any
+    prompt.prompt()
+    await prompt.userChoice
+    setInstallPrompt(null)
+  }
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
@@ -89,8 +108,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           })}
         </nav>
 
-        {/* 로그아웃 */}
-        <div className="p-3 border-t border-blue-700">
+        {/* 앱 설치 + 로그아웃 */}
+        <div className="p-3 border-t border-blue-700 space-y-1">
+          {installPrompt && (
+            <button
+              onClick={handleInstall}
+              title="앱 설치"
+              className={`flex items-center gap-3 w-full px-2 py-2.5 text-sm text-yellow-300 hover:text-white hover:bg-blue-700/60 rounded-md transition-colors ${
+                collapsed ? 'justify-center' : ''
+              }`}
+            >
+              <Download size={18} className="flex-shrink-0" />
+              {!collapsed && <span>앱 설치</span>}
+            </button>
+          )}
           <button
             onClick={handleLogout}
             title="로그아웃"
